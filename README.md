@@ -1,4 +1,4 @@
-# pi-nas
+# PiNAS
 
 Self-hosted NAS on a Raspberry Pi 4B. Replaces an end-of-life network-attached storage device with a maintainable, documented alternative using commodity hardware and open-source software.
 
