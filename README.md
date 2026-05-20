@@ -88,7 +88,7 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 - **LAN only** — no public exposure, no additional open ports
 - **SSH key auth** — passwordless SSH uses ed25519 key pair, no password auth
 - **Config-based credentials** — admin password set in `config.yaml`, survives database resets
-- **CVE response** — updated to v1.3.3-stable same session as release (path traversal in public shares, GHSA-qqqm-5547-774x)
+- **CVE response** — updated to latest stable same session as release (path traversal in public shares, GHSA-qqqm-5547-774x)
 
 ---
 
