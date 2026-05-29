@@ -108,6 +108,10 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 
 System health is monitored via a Prometheus + Grafana stack. Metrics are collected from the Pi by Node Exporter and scraped by Prometheus running on a separate host. Grafana provides visualisation and alerting.
 
+### Screenshot
+
+![Pi Monitor Dashboard](assets/screenshots/grafana-pi-monitor.png)
+
 ### Stack
 
 | Layer | Component |
