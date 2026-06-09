@@ -11,9 +11,9 @@ Computer
   |
   | rsync over SSH (daily, anacron)
   |
-Router
+Router (ethernet)
   |
-Raspberry Pi 4B (Debian Trixie ARM64)
+Raspberry Pi 4B (Debian Trixie ARM64) — static IP via systemd-networkd
   |
   +-- Powered USB Hub
         |
@@ -27,22 +27,33 @@ Raspberry Pi 4B (Debian Trixie ARM64)
                           /mnt/nas
                                 |
                                 FileBrowser Quantum (LAN only)
+
+Internet
+  |
+Cloudflare Edge (Brisbane/Sydney)
+  |
+  | Cloudflare Tunnel (outbound, no open ports)
+  |
+Raspberry Pi 4B
+  |
+  Nginx → Aersia web player
 ```
 
 ---
 
 ## Stack
 
-| Layer | Component |
-|---|---|
-| OS | Debian Trixie ARM64 |
-| RAID | mdadm RAID 1 (software mirror) |
-| Filesystem | ext4 |
-| File manager | FileBrowser Quantum |
-| Backup | rsync over SSH via anacron |
-| Monitoring | Prometheus + Grafana + Node Exporter |
-| Alerting | Grafana alert rules → email |
-| Service management | systemd |
+| Layer | Component | Notes |
+|---|---|---|
+| OS | Debian Trixie ARM64 | |
+| RAID | mdadm RAID 1 (software mirror) | |
+| Filesystem | ext4 | |
+| File manager | FileBrowser Quantum | LAN only |
+| Backup | rsync over SSH via anacron | |
+| External access | Cloudflare Tunnel | Replaces port forwarding — ISP-agnostic |
+| Monitoring | Prometheus + Grafana + Node Exporter | |
+| Alerting | Grafana alert rules → email | |
+| Service management | systemd | |
 
 ---
 
@@ -58,13 +69,15 @@ Raspberry Pi 4B (Debian Trixie ARM64)
 
 **Time Machine** — Cannot be scoped to a single folder. It snapshots the full system state regardless of exclusions. rsync is selective by design.
 
-**Public subdomain with TLS** — Would require ongoing certificate management, authentication layer, and permanent attack surface exposure. The use case (storage, home network) doesn't justify it. LAN-only access with SSH tunnel on demand covers the rare exception.
+**Port forwarding + dynamic DNS** — Originally used on previous ISP. Replaced by Cloudflare Tunnel after ISP change to a residential plan that blocks inbound ports 80/443. Tunnel is also more secure — no open inbound ports, no dynamic DNS maintenance, ISP-agnostic.
 
 **WireGuard VPN** — The correct long-term solution for remote access, but deferred. One-time setup cost, near-zero maintenance after.
 
 **Filebrowser (original)** — v2.63.4 has an unresolved routing bug (`e.params.catchAll is not iterable`). Switched to FileBrowser Quantum, the actively maintained fork.
 
 **cron** — Skips missed jobs. If the computer is asleep or the connection drops, the backup simply doesn't run. anacron runs missed jobs on next availability; correct behaviour for a backup that doesn't need to run at a specific clock time.
+
+**DHCP reservation for Pi static IP** — Unreliable when router reboots cause IP reassignment before reservation takes effect. Replaced with static IP configured directly on the Pi via systemd-networkd. Pi IP is now stable regardless of router state.
 
 ---
 
@@ -87,9 +100,10 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 ## Security Posture
 
 - **Least privilege** — FileBrowser Quantum runs as a dedicated system user with no login shell
-- **LAN only** — no public exposure, no additional open ports
+- **LAN only** — FileBrowser not exposed publicly; no open inbound ports on router
 - **SSH key auth** — passwordless SSH uses ed25519 key pair, no password auth
 - **Config-based credentials** — admin password set in `config.yaml`, survives database resets
+- **Cloudflare Tunnel** — external access via outbound-only tunnel; origin server never directly reachable from internet
 - **CVE response** — updated to latest stable same session as release (path traversal in public shares, GHSA-qqqm-5547-774x)
 
 ---
@@ -97,9 +111,11 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 ## Operational Reliability
 
 - `nofail` flag in `/etc/fstab` — Pi boots normally if array fails to mount
-- systemd `Restart=on-failure` — FileBrowser Quantum restarts automatically on crash
+- UUID-based fstab entry — array mounts correctly regardless of device name (`md127` varies by boot)
+- systemd `Restart=on-failure` — FileBrowser Quantum and cloudflared restart automatically on crash
 - mdadm write-intent bitmap — on power loss, only changed regions resync rather than the full array
-- UUID-based fstab entry — array device name is stable across reboots
+- Static IP via systemd-networkd — Pi IP stable across router reboots and ISP changes
+- Persistent journald logging — crash evidence survives reboots (`/var/log/journal`)
 - tmux — long-running rsync sessions survive SSH disconnects
 
 ---
@@ -159,6 +175,8 @@ All alerts route to email. Backup and RAID alerts fire immediately — these ind
 
 **Binary metrics for backup and RAID** — `1` (healthy) or `0` (unhealthy). No intermediate states. Alert condition is unambiguous.
 
+**Metric labels** — Custom metrics must not define a `job` label in `.prom` files. Prometheus rewrites conflicting labels to `exported_job`, breaking alert queries. Labels are attached automatically by the scrape target configuration.
+
 ---
 
 ## Configuration
@@ -197,6 +215,31 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
+### `/etc/cloudflared/config.yml`
+
+```yaml
+tunnel: <tunnel-id>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: aersia.alexchuc.au
+    service: https://localhost:443
+    originRequest:
+      noTLSVerify: true
+  - service: http_status:404
+```
+
+### `/etc/systemd/network/eth0.network`
+
+```ini
+[Match]
+Name=eth0
+
+[Network]
+Address=<pi-ip>/24
+Gateway=<router-ip>
+DNS=<router-ip>
+```
+
 ---
 
 ## Maintenance
@@ -206,13 +249,28 @@ WantedBy=multi-user.target
 cat /proc/mdstat
 
 # Detailed array status
-sudo mdadm --detail /dev/md0
+sudo mdadm --detail /dev/md127
+
+# NAS mount status
+df -h | grep nas
+
+# Tunnel status
+sudo systemctl status cloudflared
 
 # Service status
 sudo systemctl status filebrowser
 
-# Backup job status (last 5 runs)
+# Backup metric
+cat /var/lib/node_exporter/textfile_collector/backup_all.prom
+
+# Backup log
+cat /var/log/backup-all.log | tail -20
+
+# Backup job history
 sudo journalctl | grep "macbook-backup-all" | tail -5
+
+# Force manual backup
+sudo bash /usr/local/bin/backup-all.sh
 
 # Update FileBrowser Quantum
 sudo systemctl stop filebrowser
