@@ -13,7 +13,7 @@ Computer
   |
 Router (ethernet)
   |
-Raspberry Pi 4B (Debian Trixie ARM64) — static IP via systemd-networkd
+Raspberry Pi 4B (Debian Trixie ARM64) — fixed IP via DHCP reservation on the router
   |
   +-- Powered USB Hub
         |
@@ -78,7 +78,7 @@ Raspberry Pi 4B
 
 **cron** — Skips missed jobs. If the computer is asleep or the connection drops, the backup simply doesn't run. anacron runs missed jobs on next availability; correct behaviour for a backup that doesn't need to run at a specific clock time.
 
-**DHCP reservation for Pi static IP** — Unreliable when router reboots cause IP reassignment before reservation takes effect. Replaced with static IP configured directly on the Pi via systemd-networkd. Pi IP is now stable regardless of router state.
+**DHCP reservation for Pi static IP** — Unreliable when router reboots cause IP reassignment before reservation takes effect. Replaced with static IP configured directly on the Pi via systemd-networkd. **Superseded (October 2026):** the Pi now runs NetworkManager, with its IP fixed by a DHCP reservation on the router.
 
 **Promtail for log shipping** — Promtail was removed from Loki releases at v3.x and receives no security updates. Grafana Alloy is the supported replacement. Installed from the official Grafana apt repository so it receives security patches via `apt upgrade`.
 
@@ -119,7 +119,7 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 - UUID-based fstab entry — array mounts correctly regardless of device name (`md127` varies by boot)
 - systemd `Restart=on-failure` — FileBrowser Quantum and cloudflared restart automatically on crash
 - mdadm write-intent bitmap — on power loss, only changed regions resync rather than the full array
-- Static IP via systemd-networkd — Pi IP stable across router reboots and ISP changes
+- Fixed IP via DHCP reservation on the router (NetworkManager on the Pi)
 - Persistent journald logging — crash evidence survives reboots (`/var/log/journal`)
 - tmux — long-running rsync sessions survive SSH disconnects
 
@@ -246,18 +246,6 @@ ingress:
   - service: http_status:404
 ```
 
-### `/etc/systemd/network/eth0.network`
-
-```ini
-[Match]
-Name=eth0
-
-[Network]
-Address=<pi-ip>/24
-Gateway=<router-ip>
-DNS=<router-ip>
-```
-
 ### `/etc/alloy/config.alloy`
 
 ```hcl
@@ -283,6 +271,15 @@ loki.write "default" {
   }
 }
 ```
+
+---
+
+## Updates
+
+Notify automatically, update deliberately — every update keeps exactly one previous version to roll back to.
+
+- **Monitoring stack (Prometheus, Grafana, Loki):** images pinned to exact versions in Docker Compose. Self-hosted [Renovate](https://docs.renovatebot.com/) runs daily on GitHub Actions, signed in as a private GitHub App so its PRs trigger email notifications, and opens a PR once a new release is 7 days old. Each PR is reviewed against the release notes and open upstream issues, merged, then applied with `docker compose up -d`.
+- **FileBrowser Quantum:** version pinned in Ansible vars (also tracked by Renovate). An Ansible playbook stops the service, keeps the current binary and database as `.prev`, installs the new release, health-checks the web UI, and restores the previous version automatically if the check fails.
 
 ---
 
