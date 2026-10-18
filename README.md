@@ -119,6 +119,8 @@ Daily incremental rsync of selected folders from connected devices to the NAS. M
 - UUID-based fstab entry — array mounts correctly regardless of device name (`md127` varies by boot)
 - systemd `Restart=on-failure` — FileBrowser Quantum and cloudflared restart automatically on crash
 - mdadm write-intent bitmap — on power loss, only changed regions resync rather than the full array
+- Monthly mdadm scrub (`mdcheck` systemd timers) — reads and compares both mirrors to catch bad blocks before a disk is needed
+- Early-warning alert on USB/UAS link resets and disk I/O errors — these precede mdadm dropping a disk from the array
 - Fixed IP via DHCP reservation on the router (NetworkManager on the Pi)
 - Persistent journald logging — crash evidence survives reboots (`/var/log/journal`)
 - tmux — long-running rsync sessions survive SSH disconnects
