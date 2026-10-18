@@ -170,18 +170,23 @@ Alloy tails the systemd journal and ships all events to Loki with `job="pi"` and
 
 **`backup_last_success`** — Written by the backup wrapper script after each anacron run. Value `1` if all rsync jobs exited cleanly, `0` if any job failed.
 
-**`raid_health`** — Written by a cron job every 5 minutes. Parses `mdadm --detail` output; value `1` if array state is `clean`, `0` for any other state.
+**`raid_health`** — Written by a cron job every 5 minutes. Parses `mdadm --detail` output; value `1` if array state is `clean`, `0` for any other state. Superseded for alerting by Node Exporter's native `node_md_*` metrics (see Design Decisions).
 
 ### Alert Rules
 
-| Rule | Datasource | Condition | Fires immediately |
-|---|---|---|---|
-| Backup Last Success | Prometheus | `backup_last_success == 0` | Yes |
-| RAID Health | Prometheus | `raid_health == 0` | Yes |
-| High CPU | Prometheus | CPU > 80% sustained 1m | No — 1m pending |
-| SSH Brute Force | Loki | >5 failed SSH attempts in 5m | Yes |
+Provisioned from git (read-only in the Grafana UI). All route to email and repeat at most once every 24 hours.
 
-All alerts route to email. Backup and RAID alerts fire immediately — these indicate data integrity risk. SSH Brute Force fires on `count_over_time({job="pi"} |= "Failed password" [5m]) > 5`.
+| Rule | Datasource | Condition | Pending |
+|---|---|---|---|
+| RAID Health | Prometheus | `node_md_disks_required - node_md_disks{state="active"} > 0`, or host up but array metrics missing | 5m |
+| Disk link errors | Loki | Any `uas_eh_abort_handler`, `USB disconnect` or disk I/O error in the last hour | None |
+| Host unreachable | Prometheus | `up == 0` | 10m |
+| Backup Last Success | Prometheus | `backup_last_success == 0` | 1h |
+| Backup Stale | Prometheus | Backup metric not written for > 36h | None |
+| High CPU | Prometheus | CPU > 80% | 10m |
+| SSH Brute Force | Loki | `count_over_time({job="pi"} \|= "Failed password" [5m]) > 5` | 1m |
+
+The monitoring host sleeps, so gaps in data keep each rule's last state rather than resolving and re-firing. Host unreachable covers the case that hides: with no fresh data, every other rule would stay silently in its last state.
 
 ### Design Decisions
 
@@ -193,7 +198,13 @@ All alerts route to email. Backup and RAID alerts fire immediately — these ind
 
 **Loki label override** — Alloy's default behaviour sets the `job` label to the internal component name (`loki.source.journal.pi_journal`). A `loki.relabel` block forces `job="pi"` for consistent, readable label values in Grafana queries.
 
-**Binary metrics for backup and RAID** — `1` (healthy) or `0` (unhealthy). No intermediate states. Alert condition is unambiguous.
+**Binary metric for backup** — `1` (healthy) or `0` (unhealthy). No intermediate states. Alert condition is unambiguous.
+
+**Native mdadm metrics over a custom script for RAID** — Node Exporter already exposes required vs active disks per array. The rule alerts on missing mirrors directly, with no cron job to fail silently. Native metrics vanish if the array is not assembled, so the rule also fires when the host is up but the array's metrics are missing.
+
+**Early warning from kernel logs** — a failing USB link logs resets well before mdadm drops the disk. Alerting on those lines in Loki gives time to act while the mirror is still intact.
+
+**24h repeat interval** — the Grafana default (4h) turned one ongoing fault into several emails a day. One reminder a day keeps an unresolved fault visible without training the reader to ignore it.
 
 **Metric labels** — Custom metrics must not define a `job` label in `.prom` files. Prometheus rewrites conflicting labels to `exported_job`, breaking alert queries.
 
