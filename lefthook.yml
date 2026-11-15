@@ -5,6 +5,10 @@
 # these hooks are the second, stopping a secret before it leaves the Mac.
 pre-commit:
   commands:
+    private-terms:
+      # Personal context (names, a document's subject) never reaches git. The checker and
+      # its term list live in ~/.config/git/, outside every repo; skipped where absent.
+      run: 'c="$HOME/.config/git/private-terms-check"; [ ! -x "$c" ] || "$c" staged'
     gitleaks:
       run: gitleaks git --staged --redact --no-banner --verbose
     no-secret-files:
@@ -16,3 +20,8 @@ pre-push:
   commands:
     gitleaks-history:
       run: gitleaks git --redact --no-banner --verbose
+
+commit-msg:
+  commands:
+    private-terms:
+      run: 'c="$HOME/.config/git/private-terms-check"; [ ! -x "$c" ] || "$c" msg {1}'
